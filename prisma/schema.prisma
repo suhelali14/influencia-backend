@@ -1,0 +1,310 @@
+// Influencia - Prisma Schema
+// Auto-generated from TypeORM entities to ensure 1:1 parity
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  creator
+  brand_admin
+  brand_member
+  platform_admin
+}
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+}
+
+enum TenantStatus {
+  active
+  suspended
+  trial
+}
+
+enum TenantPlan {
+  basic
+  pro
+  enterprise
+}
+
+enum CampaignStatus {
+  draft
+  active
+  paused
+  completed
+  cancelled
+}
+
+enum Platform {
+  instagram
+  youtube
+  tiktok
+  twitter
+}
+
+enum CollaborationStatus {
+  pending
+  accepted
+  rejected
+  completed
+  cancelled
+}
+
+enum PaymentStatus {
+  pending
+  processing
+  completed
+  failed
+  refunded
+}
+
+enum PaymentType {
+  campaign_payment
+  platform_fee
+  refund
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String       @unique
+  slug          String       @unique
+  status        TenantStatus @default(trial)
+  plan          TenantPlan   @default(basic)
+  settings      Json?
+  trial_ends_at DateTime?    @db.Timestamp()
+  created_at    DateTime     @default(now()) @db.Timestamp()
+  updated_at    DateTime     @default(now()) @db.Timestamp()
+  deleted_at    DateTime?    @db.Timestamp()
+
+  users User[]
+
+  @@map("tenants")
+}
+
+model User {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id      String?    @db.Uuid
+  email          String     @unique
+  phone          String?
+  password_hash  String
+  role           UserRole
+  status         UserStatus @default(active)
+  email_verified Boolean    @default(false)
+  phone_verified Boolean    @default(false)
+  last_login_at  DateTime?  @db.Timestamp()
+  metadata       Json?
+  first_name     String?
+  last_name      String?
+  avatar_url     String?
+  created_at     DateTime   @default(now()) @db.Timestamp()
+  updated_at     DateTime   @default(now()) @db.Timestamp()
+  deleted_at     DateTime?  @db.Timestamp()
+
+  tenant  Tenant?  @relation(fields: [tenant_id], references: [id])
+  creator Creator?
+  brand   Brand?
+
+  @@map("users")
+}
+
+model Creator {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String   @unique @db.Uuid
+  bio             String?
+  phone           String?
+  location        String?
+  avatar_url      String?
+  social_links    Json?
+  overall_rating  Decimal  @default(0) @db.Decimal(5, 2)
+  total_campaigns Int      @default(0)
+  total_earnings  Decimal  @default(0) @db.Decimal(12, 2)
+  categories      String[] @default([])
+  languages       String[] @default([])
+  is_active       Boolean  @default(true)
+  is_verified     Boolean  @default(false)
+  created_at      DateTime @default(now()) @db.Timestamp()
+  updated_at      DateTime @default(now()) @db.Timestamp()
+
+  user            User              @relation(fields: [user_id], references: [id])
+  collaborations  Collaboration[]
+  social_accounts SocialAccount[]
+  payments        Payment[]
+  ai_reports      AIAnalysisReport[] @relation("creator_reports")
+
+  @@map("creators")
+}
+
+model Brand {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String   @unique @db.Uuid
+  company_name    String
+  website         String?
+  industry        String?
+  description     String?
+  logo_url        String?
+  phone           String?
+  address         String?
+  total_campaigns Int      @default(0)
+  total_spent     Decimal  @default(0) @db.Decimal(12, 2)
+  is_active       Boolean  @default(true)
+  is_verified     Boolean  @default(false)
+  created_at      DateTime @default(now()) @db.Timestamp()
+  updated_at      DateTime @default(now()) @db.Timestamp()
+
+  user      User       @relation(fields: [user_id], references: [id])
+  campaigns Campaign[]
+
+  @@map("brands")
+}
+
+model Campaign {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  brand_id        String         @db.Uuid
+  title           String
+  description     String         @db.Text
+  platform        Platform
+  category        String
+  budget          Decimal        @db.Decimal(12, 2)
+  start_date      DateTime       @db.Timestamp()
+  end_date        DateTime       @db.Timestamp()
+  status          CampaignStatus @default(draft)
+  requirements    Json?
+  target_audience Json?
+  total_creators  Int            @default(0)
+  total_reach     Int            @default(0)
+  total_spent     Decimal        @default(0) @db.Decimal(12, 2)
+  created_at      DateTime       @default(now()) @db.Timestamp()
+  updated_at      DateTime       @default(now()) @db.Timestamp()
+
+  brand          Brand            @relation(fields: [brand_id], references: [id])
+  collaborations Collaboration[]
+  payments       Payment[]
+  ai_reports     AIAnalysisReport[] @relation("campaign_reports")
+
+  @@map("campaigns")
+}
+
+model Collaboration {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaign_id       String              @db.Uuid
+  creator_id        String              @db.Uuid
+  status            CollaborationStatus @default(pending)
+  proposed_budget   Decimal?            @db.Decimal(12, 2)
+  message           String?             @db.Text
+  deliverables      Json?
+  deadline          DateTime?           @db.Timestamp()
+  rejection_reason  String?             @db.Text
+  submitted_content Json?
+  payment_completed Boolean             @default(false)
+  created_at        DateTime            @default(now()) @db.Timestamp()
+  updated_at        DateTime            @default(now()) @db.Timestamp()
+
+  campaign Campaign @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  creator  Creator  @relation(fields: [creator_id], references: [id], onDelete: Cascade)
+
+  @@map("collaborations")
+}
+
+model Payment {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaign_id     String        @db.Uuid
+  creator_id      String        @db.Uuid
+  amount          Decimal       @db.Decimal(12, 2)
+  payment_type    PaymentType
+  status          PaymentStatus @default(pending)
+  transaction_id  String?
+  payment_gateway String?
+  metadata        Json?
+  processed_at    DateTime?     @db.Timestamp()
+  created_at      DateTime      @default(now()) @db.Timestamp()
+  updated_at      DateTime      @default(now()) @db.Timestamp()
+
+  campaign Campaign @relation(fields: [campaign_id], references: [id])
+  creator  Creator  @relation(fields: [creator_id], references: [id])
+
+  @@map("payments")
+}
+
+model SocialAccount {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creator_id       String   @db.Uuid
+  platform         Platform
+  platform_user_id String
+  username         String
+  access_token     String?
+  refresh_token    String?
+  token_expires_at DateTime? @db.Timestamp()
+  followers_count  Int       @default(0)
+  engagement_rate  Decimal   @default(0) @db.Decimal(5, 2)
+  metrics          Json?
+  is_connected     Boolean   @default(true)
+  last_synced_at   DateTime? @db.Timestamp()
+  created_at       DateTime  @default(now()) @db.Timestamp()
+  updated_at       DateTime  @default(now()) @db.Timestamp()
+
+  creator         Creator          @relation(fields: [creator_id], references: [id])
+  metrics_history MetricsHistory[]
+
+  @@map("social_accounts")
+}
+
+model MetricsHistory {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  social_account_id String   @db.Uuid
+  followers_count   Int      @default(0)
+  engagement_rate   Decimal  @default(0) @db.Decimal(5, 2)
+  impressions       BigInt?
+  reach             BigInt?
+  avg_likes         Int?
+  avg_comments      Int?
+  avg_views         Int?
+  quality_score     Int?
+  recorded_at       DateTime @db.Timestamp()
+  created_at        DateTime @default(now()) @db.Timestamp()
+
+  social_account SocialAccount @relation(fields: [social_account_id], references: [id], onDelete: Cascade)
+
+  @@index([social_account_id, recorded_at])
+  @@map("social_metrics_history")
+}
+
+model AIAnalysisReport {
+  id                   Int      @id @default(autoincrement())
+  campaign_id          String   @db.Uuid
+  creator_id           String   @db.Uuid
+  match_score          Decimal  @default(0) @db.Decimal(5, 2)
+  ml_match_score       Decimal? @db.Decimal(5, 2)
+  dl_match_score       Decimal? @db.Decimal(5, 2)
+  estimated_roi        Decimal? @db.Decimal(6, 2)
+  success_probability  Decimal? @db.Decimal(4, 3)
+  predicted_engagement Decimal? @db.Decimal(5, 2)
+  audience_overlap     Decimal? @db.Decimal(5, 2)
+  strengths            Json?
+  concerns             Json?
+  reasons              Json?
+  ai_summary           String?  @db.Text
+  ai_recommendations   Json?
+  full_report          String?  @db.Text
+  risk_assessment      Json?
+  model_version        String?  @db.VarChar(50)
+  confidence_level     String?  @db.VarChar(20)
+  features_used        Json?
+  created_at           DateTime @default(now()) @db.Timestamp()
+  updated_at           DateTime @default(now()) @db.Timestamp()
+
+  campaign Campaign @relation("campaign_reports", fields: [campaign_id], references: [id], onDelete: Cascade)
+  creator  Creator  @relation("creator_reports", fields: [creator_id], references: [id], onDelete: Cascade)
+
+  @@map("ai_analysis_reports")
+}

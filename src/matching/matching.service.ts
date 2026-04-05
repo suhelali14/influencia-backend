@@ -7,6 +7,7 @@ import { Collaboration, CollaborationStatus } from '../campaigns/entities/collab
 import { AIAnalysisReport } from './entities/ai-analysis-report.entity';
 import { AIPythonService } from './ai-python.service';
 import { AiMatchingService } from '../ai/ai-matching.service';
+import { PaginationDto, PaginatedResponse } from '../common/dto/pagination.dto';
 
 interface MatchAnalysis {
   score: number;
@@ -31,6 +32,14 @@ interface CreatorMatch {
 export class MatchingService {
   private readonly logger = new Logger(MatchingService.name);
 
+  /**
+   * In-memory cache for matching results.
+   * Key: campaignId, Value: { results, timestamp }
+   * TTL: 5 minutes — avoids re-running ML for every page request
+   */
+  private matchCache = new Map<string, { results: CreatorMatch[]; timestamp: number }>();
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(
     @InjectRepository(Creator)
     private creatorsRepository: Repository<Creator>,
@@ -44,7 +53,13 @@ export class MatchingService {
     private aiMatchingService: AiMatchingService,
   ) {}
 
-  async findMatchingCreators(campaignId: string): Promise<CreatorMatch[]> {
+  async findMatchingCreators(
+    campaignId: string,
+    pagination?: PaginationDto,
+  ): Promise<PaginatedResponse<CreatorMatch>> {
+    const page = pagination?.page ?? 1;
+    const pageSize = pagination?.pageSize ?? 12;
+
     const campaign = await this.campaignsRepository.findOne({
       where: { id: campaignId },
     });
@@ -53,75 +68,90 @@ export class MatchingService {
       throw new NotFoundException('Campaign not found');
     }
 
+    // ── Check cache ──────────────────────────────────
+    const cached = this.matchCache.get(campaignId);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      this.logger.log(`⚡ Cache hit for campaign ${campaignId} (${cached.results.length} creators)`);
+      const start = (page - 1) * pageSize;
+      const slice = cached.results.slice(start, start + pageSize);
+      return new PaginatedResponse(slice, cached.results.length, page, pageSize);
+    }
+
+    // ── Cache miss: compute matches ─────────────────
+    this.logger.log(`🔄 Computing matches for campaign ${campaignId}...`);
+
     // Get all active and verified creators
     const creators = await this.creatorsRepository.find({
       where: { is_active: true, is_verified: true },
       relations: ['user'],
     });
 
-    // Calculate matches with detailed analysis + AI predictions
-    const matches = await Promise.all(
-      creators.map(async (creator) => {
-        // Get rule-based analysis
-        const analysis = this.analyzeMatch(creator, campaign);
-        
-        // Get AI-enhanced analysis (cached or generate new)
-        let aiAnalysis: AIAnalysisReport | null = null;
-        try {
-          aiAnalysis = await this.getAIAnalysis(campaignId, creator.id);
-          
-          // Use AI match score if available (prioritize ML score, fallback to overall score)
-          if (aiAnalysis && aiAnalysis.ml_match_score) {
-            analysis.score = aiAnalysis.ml_match_score;
-          } else if (aiAnalysis && aiAnalysis.match_score) {
-            analysis.score = aiAnalysis.match_score;
+    // STEP 1: Fast rule-based scoring for ALL creators (no external calls)
+    const ruleBasedMatches: CreatorMatch[] = creators.map((creator) => {
+      const analysis = this.analyzeMatch(creator, campaign);
+      return {
+        creator,
+        matchScore: analysis.score,
+        analysis,
+        aiAnalysis: null,
+        rank: 0,
+      };
+    });
+
+    // Sort by rule-based score
+    ruleBasedMatches.sort((a, b) => b.matchScore - a.matchScore);
+
+    // STEP 2: Enhance TOP creators with AI/ML (only top 20 for performance)
+    const topN = Math.min(20, ruleBasedMatches.length);
+    const aiEnhancedPromises = ruleBasedMatches.slice(0, topN).map(async (match) => {
+      try {
+        // Check if cached AI report exists in DB
+        const existingReport = await this.aiReportsRepository.findOne({
+          where: { campaign_id: campaignId, creator_id: match.creator.id },
+          order: { created_at: 'DESC' },
+        });
+
+        if (existingReport) {
+          // Use cached DB report
+          if (existingReport.ml_match_score) {
+            match.analysis.score = Number(existingReport.ml_match_score);
+            match.matchScore = Number(existingReport.ml_match_score);
           }
-          
-          // Enhance with AI predictions
-          if (aiAnalysis) {
-            if (aiAnalysis.estimated_roi) {
-              analysis.estimatedROI = aiAnalysis.estimated_roi;
-            }
-            
-            // Add AI-specific strengths
-            if (aiAnalysis.strengths && aiAnalysis.strengths.length > 0) {
-              analysis.strengths = [...new Set([...analysis.strengths, ...aiAnalysis.strengths])];
-            }
-            
-            // Add AI-specific concerns
-            if (aiAnalysis.concerns && aiAnalysis.concerns.length > 0) {
-              analysis.concerns = [...new Set([...analysis.concerns, ...aiAnalysis.concerns])];
-            }
-            
-            // Add AI reasons
-            if (aiAnalysis.reasons && aiAnalysis.reasons.length > 0) {
-              analysis.reasons = [...new Set([...analysis.reasons, ...aiAnalysis.reasons])];
-            }
+          if (existingReport.estimated_roi) {
+            match.analysis.estimatedROI = Number(existingReport.estimated_roi);
           }
-        } catch (error) {
-          // AI failed, use rule-based scoring (already calculated)
-          console.log(`AI analysis skipped for creator ${creator.id}:`, error.message);
+          if (existingReport.strengths?.length) {
+            match.analysis.strengths = [...new Set([...match.analysis.strengths, ...existingReport.strengths])];
+          }
+          if (existingReport.concerns?.length) {
+            match.analysis.concerns = [...new Set([...match.analysis.concerns, ...existingReport.concerns])];
+          }
+          match.aiAnalysis = existingReport;
         }
-        
-        return {
-          creator,
-          matchScore: analysis.score,
-          analysis,
-          aiAnalysis, // Include AI data for frontend
-          rank: 0, // Will be set after sorting
-        };
-      })
-    );
+        // If no cached report, skip ML call — it will be done on-demand via detailed analysis
+      } catch (err) {
+        this.logger.warn(`⚠️ AI enrichment skipped for creator ${match.creator.id}`);
+      }
+      return match;
+    });
 
-    // Sort by match score and assign ranks
-    const sortedMatches = matches
-      .sort((a, b) => b.matchScore - a.matchScore)
-      .map((match, index) => ({
-        ...match,
-        rank: index + 1,
-      }));
+    const enhanced = await Promise.all(aiEnhancedPromises);
 
-    return sortedMatches;
+    // Merge: AI-enhanced top N + remaining rule-based
+    const allMatches = [...enhanced, ...ruleBasedMatches.slice(topN)];
+
+    // Re-sort and assign ranks
+    allMatches.sort((a, b) => b.matchScore - a.matchScore);
+    allMatches.forEach((m, i) => { m.rank = i + 1; });
+
+    // Store in cache
+    this.matchCache.set(campaignId, { results: allMatches, timestamp: Date.now() });
+    this.logger.log(`✅ Cached ${allMatches.length} matches for campaign ${campaignId}`);
+
+    // Return requested page
+    const start = (page - 1) * pageSize;
+    const slice = allMatches.slice(start, start + pageSize);
+    return new PaginatedResponse(slice, allMatches.length, page, pageSize);
   }
 
   private analyzeMatch(creator: Creator, campaign: Campaign): MatchAnalysis {

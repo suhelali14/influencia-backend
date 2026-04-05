@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Res, StreamableFile } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Param, UseGuards, Res, StreamableFile, Query } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { MatchingService } from './matching.service';
 import { AIPythonService } from './ai-python.service';
 import { PdfGenerationService } from './pdf-generation.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 @ApiTags('matching')
 @Controller('matching')
@@ -18,9 +19,18 @@ export class MatchingController {
   ) {}
 
   @Get('campaign/:campaignId/creators')
-  @ApiOperation({ summary: 'Find matching creators for campaign' })
-  async findMatchingCreators(@Param('campaignId') campaignId: string): Promise<any> {
-    return this.matchingService.findMatchingCreators(campaignId);
+  @ApiOperation({ summary: 'Find matching creators for campaign (paginated)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  async findMatchingCreators(
+    @Param('campaignId') campaignId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<any> {
+    const pagination = new PaginationDto();
+    if (page) pagination.page = parseInt(page, 10) || 1;
+    if (pageSize) pagination.pageSize = Math.min(parseInt(pageSize, 10) || 12, 50);
+    return this.matchingService.findMatchingCreators(campaignId, pagination);
   }
 
   @Get('campaign/:campaignId/creator/:creatorId/analysis')

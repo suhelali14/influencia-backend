@@ -8,6 +8,7 @@ import { Collaboration, CollaborationStatus } from '../campaigns/entities/collab
 import { Campaign } from '../campaigns/entities/campaign.entity';
 import { AIAnalysisReport } from '../matching/entities/ai-analysis-report.entity';
 import { MatchingService } from '../matching/matching.service';
+import { PaginationDto, PaginatedResponse } from '../common/dto/pagination.dto';
 
 @Injectable()
 export class CreatorsService {
@@ -33,11 +34,27 @@ export class CreatorsService {
     return this.creatorsRepository.save(creator);
   }
 
-  async findAll(): Promise<Creator[]> {
-    return this.creatorsRepository.find({
+  async findAll(pagination?: PaginationDto): Promise<PaginatedResponse<Creator>> {
+    const page = pagination?.page ?? 1;
+    const pageSize = pagination?.pageSize ?? 20;
+    const skip = (page - 1) * pageSize;
+
+    const sortField = pagination?.sortBy || 'created_at';
+    const sortOrder = pagination?.sortOrder || 'DESC';
+
+    // Validate sort field to prevent SQL injection
+    const allowedSortFields = ['created_at', 'overall_rating', 'total_campaigns', 'total_earnings'];
+    const safeSortField = allowedSortFields.includes(sortField) ? sortField : 'created_at';
+
+    const [data, totalCount] = await this.creatorsRepository.findAndCount({
       relations: ['user'],
       where: { is_active: true },
+      order: { [safeSortField]: sortOrder } as any,
+      skip,
+      take: pageSize,
     });
+
+    return new PaginatedResponse(data, totalCount, page, pageSize);
   }
 
   async findOne(id: string): Promise<Creator> {
@@ -78,15 +95,25 @@ export class CreatorsService {
     await this.creatorsRepository.save(creator);
   }
 
-  async search(query: string): Promise<Creator[]> {
-    return this.creatorsRepository
+  async search(query: string, pagination?: PaginationDto): Promise<PaginatedResponse<Creator>> {
+    const page = pagination?.page ?? 1;
+    const pageSize = pagination?.pageSize ?? 20;
+    const skip = (page - 1) * pageSize;
+
+    const qb = this.creatorsRepository
       .createQueryBuilder('creator')
       .leftJoinAndSelect('creator.user', 'user')
-      .where('creator.bio ILIKE :query', { query: `%${query}%` })
-      .orWhere('user.first_name ILIKE :query', { query: `%${query}%` })
-      .orWhere('user.last_name ILIKE :query', { query: `%${query}%` })
-      .andWhere('creator.is_active = :active', { active: true })
-      .getMany();
+      .where('creator.is_active = :active', { active: true })
+      .andWhere(
+        '(creator.bio ILIKE :query OR user.first_name ILIKE :query OR user.last_name ILIKE :query OR creator.location ILIKE :query)',
+        { query: `%${query}%` },
+      )
+      .orderBy('creator.overall_rating', 'DESC')
+      .skip(skip)
+      .take(pageSize);
+
+    const [data, totalCount] = await qb.getManyAndCount();
+    return new PaginatedResponse(data, totalCount, page, pageSize);
   }
 
   async getCreatorStats(userId: string) {

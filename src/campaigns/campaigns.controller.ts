@@ -1,10 +1,11 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { BrandsService } from '../brands/brands.service';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 @ApiTags('campaigns')
 @Controller('campaigns')
@@ -25,21 +26,47 @@ export class CampaignsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all campaigns' })
-  findAll() {
-    return this.campaignsService.findAll();
+  @ApiOperation({ summary: 'Get all campaigns (paginated)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  findAll(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const pagination = new PaginationDto();
+    if (page) pagination.page = parseInt(page, 10) || 1;
+    if (pageSize) pagination.pageSize = Math.min(parseInt(pageSize, 10) || 20, 100);
+    return this.campaignsService.findAll(pagination);
   }
 
   @Get('active')
-  @ApiOperation({ summary: 'Get active campaigns' })
-  findActive() {
-    return this.campaignsService.findActive();
+  @ApiOperation({ summary: 'Get active campaigns (paginated)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  findActive(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const pagination = new PaginationDto();
+    if (page) pagination.page = parseInt(page, 10) || 1;
+    if (pageSize) pagination.pageSize = Math.min(parseInt(pageSize, 10) || 20, 100);
+    return this.campaignsService.findActive(pagination);
   }
 
   @Get('search')
-  @ApiOperation({ summary: 'Search campaigns' })
-  search(@Query('q') query: string) {
-    return this.campaignsService.search(query);
+  @ApiOperation({ summary: 'Search campaigns (paginated)' })
+  @ApiQuery({ name: 'q', required: true, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  search(
+    @Query('q') query: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const pagination = new PaginationDto();
+    if (page) pagination.page = parseInt(page, 10) || 1;
+    if (pageSize) pagination.pageSize = Math.min(parseInt(pageSize, 10) || 20, 100);
+    return this.campaignsService.search(query, pagination);
   }
 
   @Get('brand/:brandId')

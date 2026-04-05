@@ -1,3 +1,41 @@
+// DNS Fix: Pre-resolve database hostname using Google/Cloudflare DNS
+// when the system DNS resolver fails (e.g., corporate/school networks blocking Neon queries)
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const dnsModule = require('node:dns');
+const dnsResolver = new dnsModule.Resolver();
+dnsResolver.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+
+// Store resolved IPs for later use
+const resolvedHosts: Record<string, string> = {};
+
+async function preResolveHost(hostname: string): Promise<string> {
+  return new Promise((resolve) => {
+    // First try system DNS
+    dnsModule.lookup(hostname, (err: any, address: string) => {
+      if (!err && address) {
+        resolvedHosts[hostname] = address;
+        return resolve(address);
+      }
+      // Fallback to Google/Cloudflare DNS
+      console.log(`[DNS-Fix] System DNS failed for ${hostname}, trying Google/Cloudflare DNS...`);
+      dnsResolver.resolve4(hostname, (resolveErr: any, addresses: string[]) => {
+        if (!resolveErr && addresses?.length) {
+          console.log(`[DNS-Fix] ✅ Resolved ${hostname} -> ${addresses[0]}`);
+          resolvedHosts[hostname] = addresses[0];
+          resolve(addresses[0]);
+        } else {
+          console.error(`[DNS-Fix] ❌ Could not resolve ${hostname}`);
+          resolve(hostname); // Return original hostname as fallback
+        }
+      });
+    });
+  });
+}
+
+// Export for use in app.module.ts
+(global as any).__dnsResolvedHosts = resolvedHosts;
+(global as any).__preResolveHost = preResolveHost;
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';

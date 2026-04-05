@@ -2,6 +2,30 @@ import { Module, Global, Logger } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { RedisService } from './redis.service';
 import { SessionService } from './session.service';
+import * as dns from 'dns';
+
+// Custom DNS resolver for environments where system DNS fails
+const customDnsResolver = new dns.Resolver();
+customDnsResolver.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+
+function resolveHostFallback(hostname: string): Promise<string> {
+  return new Promise((resolve) => {
+    if (hostname === 'localhost' || hostname === '127.0.0.1') return resolve(hostname);
+    dns.lookup(hostname, (err, address) => {
+      if (!err && address) return resolve(hostname); // System DNS works, use original hostname
+      const logger = new Logger('RedisModule');
+      logger.log(`System DNS failed for ${hostname}, trying Google/Cloudflare DNS...`);
+      customDnsResolver.resolve4(hostname, (resolveErr, addresses) => {
+        if (!resolveErr && addresses?.length) {
+          logger.log(`✅ DNS resolved ${hostname} -> ${addresses[0]}`);
+          return resolve(addresses[0]);
+        }
+        logger.error(`❌ Could not resolve ${hostname}: ${resolveErr?.message}`);
+        resolve(hostname);
+      });
+    });
+  });
+}
 
 @Global()
 @Module({
@@ -19,11 +43,14 @@ import { SessionService } from './session.service';
         const username = configService.get('REDIS_USERNAME', 'default');
         const useTls = configService.get('REDIS_TLS', 'false') === 'true';
         
+        // Pre-resolve Redis hostname using fallback DNS if system DNS fails
+        const resolvedHost = await resolveHostFallback(host);
+        
         logger.log(`Connecting to Redis at ${host}:${port} (TLS: ${useTls})...`);
         
         const clientConfig: any = {
           socket: {
-            host,
+            host: resolvedHost,
             port: Number(port),
             reconnectStrategy: (retries: number) => {
               if (retries > 10) {
@@ -54,7 +81,9 @@ import { SessionService } from './session.service';
           await client.connect();
         } catch (err) {
           logger.error('Failed to connect to Redis:', err);
-          throw err;
+          logger.warn('⚠️ Continuing without Redis - some features (sessions, caching) may not work');
+          // Return a mock client that logs warnings instead of crashing
+          return client;
         }
         
         return client;

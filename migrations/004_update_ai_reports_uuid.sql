@@ -1,11 +1,7 @@
 -- Migration: Update AI reports table to use UUID foreign keys
 -- Changes campaign_id and creator_id from integer to uuid
 
--- Drop existing foreign key constraints
-ALTER TABLE ai_analysis_reports DROP CONSTRAINT IF EXISTS fk_ai_reports_campaign;
-ALTER TABLE ai_analysis_reports DROP CONSTRAINT IF EXISTS fk_ai_reports_creator;
-
--- Drop the table and recreate with correct types (safer than alter column with data)
+-- Drop existing table if it exists (will also drop constraints via CASCADE)
 DROP TABLE IF EXISTS ai_analysis_reports CASCADE;
 
 CREATE TABLE ai_analysis_reports (

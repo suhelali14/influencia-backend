@@ -1,9 +1,10 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CreatorsService } from './creators.service';
 import { CreateCreatorDto } from './dto/create-creator.dto';
 import { UpdateCreatorDto } from './dto/update-creator.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 @ApiTags('creators')
 @Controller('creators')
@@ -19,15 +20,39 @@ export class CreatorsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all creators' })
-  findAll() {
-    return this.creatorsService.findAll();
+  @ApiOperation({ summary: 'Get all creators (paginated)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  @ApiQuery({ name: 'sortBy', required: false, type: String })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
+  findAll(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
+  ) {
+    const pagination = new PaginationDto();
+    if (page) pagination.page = parseInt(page, 10) || 1;
+    if (pageSize) pagination.pageSize = Math.min(parseInt(pageSize, 10) || 20, 100);
+    if (sortBy) pagination.sortBy = sortBy;
+    if (sortOrder === 'ASC' || sortOrder === 'DESC') pagination.sortOrder = sortOrder;
+    return this.creatorsService.findAll(pagination);
   }
 
   @Get('search')
-  @ApiOperation({ summary: 'Search creators' })
-  search(@Query('q') query: string) {
-    return this.creatorsService.search(query);
+  @ApiOperation({ summary: 'Search creators (paginated)' })
+  @ApiQuery({ name: 'q', required: true, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  search(
+    @Query('q') query: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const pagination = new PaginationDto();
+    if (page) pagination.page = parseInt(page, 10) || 1;
+    if (pageSize) pagination.pageSize = Math.min(parseInt(pageSize, 10) || 20, 100);
+    return this.creatorsService.search(query, pagination);
   }
 
   @Get('me')
